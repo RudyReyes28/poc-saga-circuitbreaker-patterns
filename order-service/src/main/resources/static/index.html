@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Saga y Circuit Breaker · Panel de demostración</title>
+    <style>
+        :root {
+            --canvas: #EDF0F4;
+            --panel: #FFFFFF;
+            --ink: #14213D;
+            --muted: #566277;
+            --line: #CBD3DF;
+            --soft: #F6F8FB;
+            --ok: #13806A;     --ok-bg: #DCF2EB;
+            --fail: #C4263B;   --fail-bg: #FBE2E6;
+            --comp: #A85F00;   --comp-bg: #FBEACB;
+            --active: #2A57CF; --active-bg: #E0E8FB;
+            --half: #6A4DB8;   --half-bg: #ECE6FA;
+            --sans: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+            --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+        }
+
+        * { box-sizing: border-box; }
+        html { color-scheme: light; }
+        body {
+            margin: 0;
+            background: var(--canvas);
+            color: var(--ink);
+            font-family: var(--sans);
+            font-size: 15px;
+            line-height: 1.45;
+        }
+        button, input, select { font: inherit; color: inherit; }
+        h1, h2, h3, p { margin: 0; }
+        .muted { color: var(--muted); }
+        .mono { font-family: var(--mono); font-size: .88rem; }
+
+        .page { max-width: 1280px; margin: 0 auto; padding: 22px 24px 48px; }
+
+        /* Encabezado */
+        .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+        h1 { font-size: 1.8rem; font-weight: 700; letter-spacing: -0.01em; }
+        .sub { color: var(--muted); margin-top: 2px; }
+        .conn { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .9rem; }
+        .conn .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+        .conn[data-ok="true"] .dot { background: var(--ok); }
+        .conn[data-ok="false"] .dot { background: var(--fail); }
+
+        /* Estructura */
+        .layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: 24px; align-items: start; }
+        @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+
+        h2 { font-size: 1.08rem; font-weight: 700; margin-bottom: 10px; }
+
+        /* Escenario: recorrido de la orden */
+        .stage { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px 14px; }
+        .flow-summary { min-height: 3.6em; margin-bottom: 12px; }
+        .flow-summary p + p { margin-top: 2px; }
+        .flow-summary .reason { color: var(--fail); font-size: .9rem; overflow-wrap: anywhere; }
+
+        .track-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 22px 16px 26px; }
+        .track { display: flex; align-items: center; min-width: 780px; }
+
+        .node { flex: 0 0 148px; border: 2px solid var(--line); border-radius: 10px; background: var(--panel); padding: 12px 12px 10px; transition: background-color .25s, border-color .25s; }
+        .node h3 { font-size: 1.1rem; }
+        .node .role { color: var(--muted); font-size: .8rem; }
+        .node .note { margin-top: 10px; min-height: 2.6em; font-size: .85rem; font-weight: 600; }
+        .node[data-state="active"] { border-color: var(--active); background: var(--active-bg); }
+        .node[data-state="active"] .note { color: var(--active); }
+        .node[data-state="ok"]     { border-color: var(--ok);     background: var(--ok-bg); }
+        .node[data-state="ok"] .note     { color: var(--ok); }
+        .node[data-state="fail"]   { border-color: var(--fail);   background: var(--fail-bg); }
+        .node[data-state="fail"] .note   { color: var(--fail); }
+        .node[data-state="comp"]   { border-color: var(--comp);   background: var(--comp-bg); }
+        .node[data-state="comp"] .note   { color: var(--comp); }
+        .node[data-state="idle"] .note   { color: var(--muted); font-weight: 400; }
+
+        .wire { position: relative; flex: 1 1 100px; min-width: 100px; height: 72px; }
+        .wire::before { content: ""; position: absolute; left: 0; right: 8px; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px; background: var(--line); }
+        .wire::after { content: ""; position: absolute; right: 0; top: 50%; margin-top: -6px; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-left: 9px solid var(--line); }
+        .wire[data-state="ok"]::before { background: var(--ok); }
+        .wire[data-state="ok"]::after { border-left-color: var(--ok); }
+        .wire[data-state="fail"]::before { background: repeating-linear-gradient(90deg, var(--fail) 0 8px, transparent 8px 14px); }
+        .wire[data-state="fail"]::after { border-left-color: var(--fail); }
+        .wire[data-state="comp"]::before { left: 8px; right: 0; background: var(--comp); }
+        .wire[data-state="comp"]::after { right: auto; left: 0; border-left: none; border-right: 9px solid var(--comp); }
+        .wire[data-state="active"]::before { background: repeating-linear-gradient(90deg, var(--active) 0 10px, transparent 10px 18px); background-size: 18px 3px; animation: flow .8s linear infinite; }
+        @keyframes flow { to { background-position: 18px 0; } }
+
+        /* Interruptor del circuit breaker sobre el cable */
+        .gate { position: absolute; left: 50%; top: 50%; width: 80px; height: 24px; transform: translate(-50%, -50%); background: var(--panel); }
+        .gate svg { display: block; margin: 0 auto; overflow: visible; }
+        .gate .term { fill: var(--panel); stroke: var(--ink); stroke-width: 2.5; }
+        .gate .lever { stroke: var(--muted); stroke-width: 3.5; stroke-linecap: round; transform-origin: 8px 0; transition: transform .3s ease, stroke .3s; }
+        .gate[data-state="CLOSED"] .lever { stroke: var(--ok); transform: rotate(0deg); }
+        .gate[data-state="HALF_OPEN"] .lever { stroke: var(--half); transform: rotate(-22deg); }
+        .gate[data-state="OPEN"] .lever { stroke: var(--fail); transform: rotate(-40deg); }
+        .gate-label { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: .8rem; color: var(--muted); }
+        .gate-label b { font-weight: 700; }
+        .gate[data-state="CLOSED"] .gate-label b { color: var(--ok); }
+        .gate[data-state="HALF_OPEN"] .gate-label b { color: var(--half); }
+        .gate[data-state="OPEN"] .gate-label b { color: var(--fail); }
+
+        .bus { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--panel); border: 1.5px dashed var(--muted); border-radius: 8px; padding: 4px 10px; font-size: .8rem; text-align: center; line-height: 1.25; }
+        .bus small { display: block; color: var(--muted); font-size: .72rem; }
+
+        /* Eventos */
+        .timeline-title { margin-top: 22px; }
+        .timeline { list-style: none; margin: 4px 0 8px 6px; padding: 0; border-left: 2px solid var(--line); }
+        .timeline li { position: relative; padding: 5px 0 9px 20px; }
+        .timeline li::before { content: ""; position: absolute; left: -8px; top: 10px; width: 14px; height: 14px; border-radius: 50%; background: var(--panel); border: 3px solid var(--line); }
+        .timeline li[data-kind="ok"]::before { border-color: var(--ok); }
+        .timeline li[data-kind="fail"]::before { border-color: var(--fail); }
+        .timeline li[data-kind="comp"]::before { border-color: var(--comp); }
+        .timeline li[data-kind="active"]::before { border-color: var(--active); }
+        .t-time { font-family: var(--mono); font-size: .78rem; color: var(--muted); margin-right: 10px; }
+        .t-label { font-weight: 600; }
+        .t-detail { display: block; color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+
+        /* Panel lateral */
+        .side section { padding-bottom: 22px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+        .side section:last-child { border-bottom: none; margin-bottom: 0; }
+
+        label { display: block; font-size: .88rem; color: var(--muted); margin-bottom: 10px; }
+        input, select { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); }
+        .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+        button { cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 8px 12px; }
+        button:hover { border-color: var(--ink); }
+        button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--active); outline-offset: 2px; }
+        button[disabled] { opacity: .55; cursor: progress; }
+        button.primary { width: 100%; background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 600; }
+
+        .presets { display: grid; gap: 8px; margin-top: 14px; }
+        .presets button { text-align: left; }
+        .presets .preset-title { display: block; font-weight: 600; }
+        .presets small { display: block; color: var(--muted); }
+
+        .stock { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px; font-size: .85rem; }
+        .chip { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; background: var(--soft); }
+        .chip[data-low="true"] { border-color: var(--comp); background: var(--comp-bg); }
+
+        .fault { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; }
+        .fault small { display: block; color: var(--muted); }
+        .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: 0 0 auto; }
+        .seg button { border: none; border-radius: 0; padding: 6px 11px; }
+        .seg button + button { border-left: 1px solid var(--line); }
+        .seg button[aria-pressed="true"][data-mode="NORMAL"] { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+        .seg button[aria-pressed="true"][data-mode="ERROR"]  { background: var(--fail-bg); color: var(--fail); font-weight: 600; }
+        .seg button[aria-pressed="true"][data-mode="SLOW"]   { background: var(--comp-bg); color: var(--comp); font-weight: 600; }
+        #resetFaults { margin-top: 8px; }
+
+        .breaker { padding: 10px 0; }
+        .breaker + .breaker { border-top: 1px dashed var(--line); }
+        .breaker-head { display: flex; justify-content: space-between; align-items: center; }
+        .window { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin: 8px 0 6px; }
+        .slot { height: 14px; border-radius: 3px; background: #E3E8F0; }
+        .slot[data-k="ok"] { background: var(--ok); }
+        .slot[data-k="fail"] { background: var(--fail); }
+        .breaker-meta, .breaker-note { font-size: .85rem; color: var(--muted); }
+
+        .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .82rem; font-weight: 600; white-space: nowrap; background: #E3E8F0; color: var(--muted); }
+        .badge[data-kind="ok"] { background: var(--ok-bg); color: var(--ok); }
+        .badge[data-kind="fail"] { background: var(--fail-bg); color: var(--fail); }
+        .badge[data-kind="comp"] { background: var(--comp-bg); color: var(--comp); }
+        .badge[data-kind="active"] { background: var(--active-bg); color: var(--active); }
+        .badge[data-kind="half"] { background: var(--half-bg); color: var(--half); }
+
+        /* Tabla de órdenes */
+        .orders { margin-top: 28px; }
+        .table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+        table { width: 100%; border-collapse: collapse; min-width: 680px; }
+        th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+        tbody tr:last-child td { border-bottom: none; }
+        th { background: var(--soft); color: var(--muted); font-weight: 600; font-size: .85rem; }
+        tbody tr { cursor: pointer; }
+        tbody tr:hover { background: var(--soft); }
+        tbody tr[aria-selected="true"] { background: var(--active-bg); }
+        td.reason { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+        td.empty { padding: 22px 14px; color: var(--muted); cursor: default; }
+
+        /* Aviso */
+        .toast { position: fixed; left: 50%; bottom: 22px; max-width: min(580px, 92vw); transform: translate(-50%, 20px); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 10px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; overflow-wrap: anywhere; z-index: 10; }
+        .toast[data-show="true"] { opacity: 1; transform: translate(-50%, 0); }
+        .toast[data-kind="fail"] { background: var(--fail); }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation: none !important; transition: none !important; }
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+
+    <header class="top">
+        <div>
+            <h1>Saga y Circuit Breaker</h1>
+            <p class="sub">Compra con cuatro microservicios coordinados por un orquestador</p>
+        </div>
+        <div class="conn" id="conn" data-ok="unknown" role="status">
+            <span class="dot"></span><span id="connText">Conectando con Order Service</span>
+        </div>
+    </header>
+
+    <div class="layout">
+
+        <!-- Recorrido de la orden seleccionada -->
+        <section class="stage" aria-labelledby="flowTitle">
+            <h2 id="flowTitle">Recorrido de la orden</h2>
+            <div class="flow-summary" id="flowSummary"></div>
+
+            <div class="track-wrap">
+                <div class="track" aria-label="Pasos de la saga">
+                    <div class="node" data-node="order">
+                        <h3>Order</h3><div class="role">Orquestador</div><div class="note"></div>
+                    </div>
+
+                    <div class="wire" data-wire="payment">
+                        <div class="gate" data-gate="paymentCB" data-title="Pagos"></div>
+                    </div>
+
+                    <div class="node" data-node="payment">
+                        <h3>Payment</h3><div class="role">REST con circuit breaker</div><div class="note"></div>
+                    </div>
+
+                    <div class="wire" data-wire="inventory">
+                        <div class="gate" data-gate="inventoryCB" data-title="Inventario"></div>
+                    </div>
+
+                    <div class="node" data-node="inventory">
+                        <h3>Inventory</h3><div class="role">REST con circuit breaker</div><div class="note"></div>
+                    </div>
+
+                    <div class="wire" data-wire="shipping">
+                        <div class="bus">Kafka<small>comando y respuesta</small></div>
+                    </div>
+
+                    <div class="node" data-node="shipping">
+                        <h3>Shipping</h3><div class="role">Mensajería asíncrona</div><div class="note"></div>
+                    </div>
+                </div>
+            </div>
+
+            <h2 class="timeline-title">Eventos de la saga</h2>
+            <ol class="timeline" id="timeline"></ol>
+        </section>
+
+        <!-- Controles -->
+        <aside class="side">
+
+            <section aria-labelledby="newOrderTitle">
+                <h2 id="newOrderTitle">Nueva orden</h2>
+                <form id="orderForm">
+                    <label>Cliente
+                        <input name="customerId" value="cli-001" required>
+                    </label>
+                    <label>Producto
+                        <select name="productId" id="productSelect">
+                            <option value="prod-001">prod-001</option>
+                            <option value="prod-002">prod-002</option>
+                            <option value="prod-003">prod-003</option>
+                        </select>
+                    </label>
+                    <div class="row2">
+                        <label>Cantidad
+                            <input type="number" name="quantity" min="1" value="1" required>
+                        </label>
+                        <label>Precio unitario
+                            <input type="number" name="unitPrice" min="0.01" step="0.01" value="50" required>
+                        </label>
+                    </div>
+                    <button class="primary" type="submit" id="submitOrder">Crear orden</button>
+                </form>
+
+                <div class="presets">
+                    <button type="button" data-preset="success">
+                        <span class="preset-title">Compra exitosa</span><small>Completa los cuatro pasos</small>
+                    </button>
+                    <button type="button" data-preset="noStock">
+                        <span class="preset-title">Producto sin stock</span><small>Se reembolsa el pago y se cancela la orden</small>
+                    </button>
+                    <button type="button" data-preset="rejected">
+                        <span class="preset-title">Pago rechazado</span><small>Un monto sobre 10 000 se cancela sin reembolso</small>
+                    </button>
+                    <button type="button" data-preset="burst">
+                        <span class="preset-title" id="burstTitle">Ráfaga de 7 órdenes</span><small>Con un servicio en error, abre el circuito</small>
+                    </button>
+                </div>
+
+                <div class="stock" id="stock" aria-label="Stock actual"></div>
+            </section>
+
+            <section aria-labelledby="faultsTitle">
+                <h2 id="faultsTitle">Fallos simulados</h2>
+                <div id="faults"></div>
+                <button type="button" id="resetFaults">Restaurar todo a normal</button>
+            </section>
+
+            <section aria-labelledby="breakersTitle">
+                <h2 id="breakersTitle">Circuit breakers</h2>
+                <div id="breakers"></div>
+            </section>
+
+        </aside>
+    </div>
+
+    <section class="orders" aria-labelledby="ordersTitle">
+        <h2 id="ordersTitle">Órdenes</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr><th>Orden</th><th>Producto</th><th>Total</th><th>Estado</th><th>Detalle</th></tr>
+                </thead>
+                <tbody id="ordersBody"></tbody>
+            </table>
+        </div>
+    </section>
+
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+    (() => {
+        'use strict';
+
+        /* ───────────── Utilidades ───────────── */
+        const $ = (selector, root = document) => root.querySelector(selector);
+        const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+        const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const shortId = (id) => String(id).slice(0, 8);
+        const fmtTime = (ms) => {
+            const d = new Date(ms);
+            return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+        };
+
+        async function api(path, options) {
+            const response = await fetch(path, options);
+            if (!response.ok) {
+                let detail = '';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || body.message || '';
+                } catch (_) { /* respuesta sin cuerpo */ }
+                throw new Error(detail || 'Error HTTP ' + response.status);
+            }
+            return response.status === 204 ? null : response.json();
+        }
+        const postJson = (path, body) => api(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        let toastTimer;
+        function toast(message, kind = 'info') {
+            const el = $('#toast');
+            el.textContent = message;
+            el.dataset.kind = kind;
+            el.dataset.show = 'true';
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => { el.dataset.show = 'false'; }, 4500);
+        }
+
+
+        const STATUS = {
+            PENDING:             { label: 'Pendiente', kind: 'idle' },
+            PAID:                { label: 'Pagada', kind: 'active' },
+            STOCK_RESERVED:      { label: 'Stock reservado', kind: 'active' },
+            COMPLETED:           { label: 'Completada', kind: 'ok' },
+            CANCELLED:           { label: 'Cancelada', kind: 'comp' },
+            COMPENSATION_FAILED: { label: 'Compensación incompleta', kind: 'fail' }
+        };
+
+        const EVENTS = {
+            ORDER_CREATED:        { label: 'Orden creada', kind: 'ok' },
+            PAYMENT_COMPLETED:    { label: 'Pago aprobado', kind: 'ok' },
+            PAYMENT_FAILED:       { label: 'Pago no completado', kind: 'fail' },
+            STOCK_RESERVED:       { label: 'Stock reservado', kind: 'ok' },
+            STOCK_FAILED:         { label: 'No se pudo reservar el stock', kind: 'fail' },
+            SHIPPING_REQUESTED:   { label: 'Envío solicitado por Kafka', kind: 'active' },
+            ORDER_COMPLETED:      { label: 'Orden completada', kind: 'ok' },
+            SHIPPING_FAILED:      { label: 'Shipping respondió con un fallo', kind: 'fail' },
+            COMPENSATION_STARTED: { label: 'Compensación iniciada', kind: 'comp' },
+            STOCK_RELEASED:       { label: 'Stock liberado', kind: 'comp' },
+            PAYMENT_REFUNDED:     { label: 'Pago reembolsado', kind: 'comp' },
+            ORDER_CANCELLED:      { label: 'Orden cancelada', kind: 'comp' },
+            COMPENSATION_FAILED:  { label: 'Compensación incompleta', kind: 'fail' }
+        };
+
+        const BREAKERS = [
+            { key: 'paymentCB', title: 'Pagos' },
+            { key: 'inventoryCB', title: 'Inventario' }
+        ];
+        const BREAKER_STATE = {
+            CLOSED:    { label: 'Cerrado', kind: 'ok' },
+            OPEN:      { label: 'Abierto', kind: 'fail' },
+            HALF_OPEN: { label: 'Semiabierto', kind: 'half' }
+        };
+        const OPEN_WAIT_SECONDS = 10;
+
+        const SERVICES = [
+            { key: 'payment', title: 'Payment' },
+            { key: 'inventory', title: 'Inventory' },
+            { key: 'shipping', title: 'Shipping' }
+        ];
+        const MODE_TEXT = {
+            NORMAL: 'Responde con normalidad',
+            ERROR: 'Responde con error 503',
+            SLOW: 'Tarda 3 s; el límite es 2 s',
+            UNREACHABLE: 'Sin conexión'
+        };
+
+        const PRESETS = {
+            success:  { customerId: 'cli-001', productId: 'prod-001', quantity: 1, unitPrice: 50 },
+            noStock:  { customerId: 'cli-001', productId: 'prod-003', quantity: 1, unitPrice: 50 },
+            rejected: { customerId: 'cli-001', productId: 'prod-001', quantity: 1, unitPrice: 20000 }
+        };
+        const BURST_SIZE = 7;
+        const BURST_TITLE = 'Ráfaga de ' + BURST_SIZE + ' órdenes';
+
+        const GLYPH = { idle: '', active: '… ', ok: '✓ ', fail: '✕ ', comp: '↩ ' };
+
+        /* ───────────── Estado ───────────── */
+        const state = {
+            online: null,
+            orders: [],
+            selectedId: null,
+            events: [],
+            breakers: {},
+            failModes: {},
+            stock: {},
+            openedAt: {}
+        };
+
+        /* ───────────── Derivar el recorrido desde los eventos ───────────── */
+        function failureNote(detail = '') {
+            if (detail.includes('circuito abierto')) return 'Llamada rechazada: circuito abierto';
+            if (detail.includes('no disponible')) return 'Servicio no disponible';
+            if (detail.includes('HTTP 409')) return 'Sin stock';
+            if (detail.includes('HTTP 422')) return 'Pago rechazado';
+            return 'Falló';
+        }
+
+        function deriveFlow(events) {
+            const nodes = { order: 'idle', payment: 'idle', inventory: 'idle', shipping: 'idle' };
+            const notes = { order: 'Sin actividad', payment: 'Sin actividad', inventory: 'Sin actividad', shipping: 'Sin actividad' };
+            if (!events.length) return { nodes, notes };
+
+            const find = (name) => events.find((e) => e.event === name);
+            const has = (name) => Boolean(find(name));
+            const terminal = has('ORDER_COMPLETED') || has('ORDER_CANCELLED') || has('COMPENSATION_FAILED');
+
+            // Order
+            nodes.order = 'ok'; notes.order = 'Orden creada';
+            if (has('ORDER_COMPLETED')) notes.order = 'Completada';
+            if (has('ORDER_CANCELLED')) { nodes.order = 'comp'; notes.order = 'Cancelada'; }
+            if (has('COMPENSATION_FAILED')) { nodes.order = 'fail'; notes.order = 'Compensación incompleta'; }
+
+            // Payment
+            if (has('PAYMENT_COMPLETED')) { nodes.payment = 'ok'; notes.payment = 'Pago aprobado'; }
+            else if (has('PAYMENT_FAILED')) { nodes.payment = 'fail'; notes.payment = failureNote(find('PAYMENT_FAILED').detail); }
+            else if (!terminal) { nodes.payment = 'active'; notes.payment = 'Cobrando'; }
+            if (has('PAYMENT_REFUNDED')) { nodes.payment = 'comp'; notes.payment = 'Pago reembolsado'; }
+
+            // Inventory
+            if (has('STOCK_RESERVED')) { nodes.inventory = 'ok'; notes.inventory = 'Stock reservado'; }
+            else if (has('STOCK_FAILED')) { nodes.inventory = 'fail'; notes.inventory = failureNote(find('STOCK_FAILED').detail); }
+            else if (has('PAYMENT_COMPLETED') && !terminal) { nodes.inventory = 'active'; notes.inventory = 'Reservando'; }
+            if (has('STOCK_RELEASED')) { nodes.inventory = 'comp'; notes.inventory = 'Stock liberado'; }
+
+            // Shipping
+            if (has('ORDER_COMPLETED')) { nodes.shipping = 'ok'; notes.shipping = 'Envío programado'; }
+            else if (has('SHIPPING_FAILED')) { nodes.shipping = 'fail'; notes.shipping = 'Envío fallido'; }
+            else if (has('SHIPPING_REQUESTED') && !terminal) { nodes.shipping = 'active'; notes.shipping = 'Esperando respuesta'; }
+
+            return { nodes, notes };
+        }
+
+
+        function renderConn() {
+            const el = $('#conn');
+            el.dataset.ok = String(state.online);
+            $('#connText').textContent = state.online === null
+                ? 'Conectando con Order Service'
+                : state.online
+                    ? 'Conectado, se actualiza cada segundo'
+                    : 'Sin conexión con Order Service';
+        }
+
+        function renderFlow() {
+            const order = state.orders.find((o) => o.id === state.selectedId);
+            const summary = $('#flowSummary');
+            if (!order) {
+                summary.innerHTML = '<p class="muted">Crea una orden desde el panel derecho para ver cómo avanza por los cuatro servicios.</p>';
+            } else {
+                const status = STATUS[order.status] || { label: order.status, kind: 'idle' };
+                summary.innerHTML =
+                    '<p><span class="mono">' + esc(shortId(order.id)) + '</span> ' +
+                    '<span class="badge" data-kind="' + status.kind + '">' + esc(status.label) + '</span></p>' +
+                    '<p class="muted">' + esc(order.quantity) + ' × ' + esc(order.productId) + ', total ' + esc(order.totalAmount) + '</p>' +
+                    (order.failureReason ? '<p class="reason">' + esc(order.failureReason) + '</p>' : '');
+            }
+
+            const flow = deriveFlow(order ? state.events : []);
+            Object.keys(flow.nodes).forEach((key) => {
+                const node = $('[data-node="' + key + '"]');
+                node.dataset.state = flow.nodes[key];
+                $('.note', node).textContent = GLYPH[flow.nodes[key]] + flow.notes[key];
+                const wire = $('[data-wire="' + key + '"]');
+                if (wire) wire.dataset.state = flow.nodes[key];
+            });
+        }
+
+        function renderTimeline() {
+            const list = $('#timeline');
+            if (!state.selectedId) { list.innerHTML = ''; return; }
+            if (!state.events.length) {
+                list.innerHTML = '<li class="muted">Todavía no hay eventos para esta orden.</li>';
+                return;
+            }
+            list.innerHTML = state.events.map((e) => {
+                const info = EVENTS[e.event] || { label: e.event, kind: 'idle' };
+                return '<li data-kind="' + info.kind + '">' +
+                    '<span class="t-time">' + fmtTime(e.at) + '</span>' +
+                    '<span class="t-label">' + esc(info.label) + '</span>' +
+                    (e.detail ? '<span class="t-detail" title="' + esc(e.detail) + '">' + esc(e.detail) + '</span>' : '') +
+                    '</li>';
+            }).join('');
+        }
+
+        function renderGates() {
+            $$('.gate').forEach((gate) => {
+                const info = state.breakers[gate.dataset.gate];
+                const current = info ? info.state : 'UNKNOWN';
+                gate.dataset.state = current;
+                $('.gate-state', gate).textContent = (BREAKER_STATE[current] || { label: 'Sin datos' }).label;
+            });
+        }
+
+        function renderBreakers() {
+            BREAKERS.forEach(({ key }) => {
+                const card = $('.breaker[data-cb="' + key + '"]');
+                const info = state.breakers[key];
+                const meta = BREAKER_STATE[info && info.state] || { label: 'Sin datos', kind: 'idle' };
+
+                const badge = $('.badge', card);
+                badge.textContent = meta.label;
+                badge.dataset.kind = meta.kind;
+
+                const buffered = info ? info.bufferedCalls : 0;
+                const failed = info ? info.failedCalls : 0;
+                const succeeded = Math.max(0, buffered - failed);
+                $$('.slot', card).forEach((slot, i) => {
+                    slot.dataset.k = i < succeeded ? 'ok' : i < succeeded + failed ? 'fail' : 'empty';
+                });
+
+                let text = failed + (failed === 1 ? ' fallo' : ' fallos') + ' en ' + buffered + (buffered === 1 ? ' llamada' : ' llamadas');
+                if (info && info.failureRate >= 0) text += ', tasa de fallos ' + Math.round(info.failureRate) + '%';
+                else text += ', aún sin evaluar';
+                $('.breaker-meta', card).textContent = text;
+
+                let note = '';
+                if (info && info.state === 'OPEN') {
+                    if (!state.openedAt[key]) state.openedAt[key] = Date.now();
+                    const left = Math.max(0, OPEN_WAIT_SECONDS - Math.floor((Date.now() - state.openedAt[key]) / 1000));
+                    note = 'Rechaza llamadas sin intentarlas. Pasa a semiabierto en unos ' + left + ' s.';
+                } else {
+                    delete state.openedAt[key];
+                    if (info && info.state === 'HALF_OPEN') note = 'Prueba con 3 llamadas: si salen bien, se cierra.';
+                    else if (info && info.notPermittedCalls > 0) note = info.notPermittedCalls + ' llamadas rechazadas sin intentar.';
+                }
+                $('.breaker-note', card).textContent = note;
+            });
+        }
+
+        function renderFaults() {
+            SERVICES.forEach(({ key }) => {
+                const row = $('.fault[data-service="' + key + '"]');
+                const info = state.failModes[key];
+                const mode = info ? info.mode : 'UNREACHABLE';
+                $('.fault-text', row).textContent = MODE_TEXT[mode] || mode;
+                $$('button[data-mode]', row).forEach((button) => {
+                    button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+                });
+            });
+        }
+
+        function renderStock() {
+            const entries = Object.entries(state.stock);
+            $('#stock').innerHTML = entries.map(([productId, qty]) =>
+                '<span class="chip" data-low="' + (qty === 0) + '">' + esc(productId) + ' <b>' + (qty === null ? '?' : esc(qty)) + '</b></span>'
+            ).join('');
+            $$('#productSelect option').forEach((option) => {
+                const qty = state.stock[option.value];
+                option.textContent = option.value + (qty === undefined || qty === null ? '' : ' (' + qty + ' en stock)');
+            });
+        }
+
+        function renderOrders() {
+            const body = $('#ordersBody');
+            if (!state.orders.length) {
+                body.innerHTML = '<tr><td class="empty" colspan="5">Todavía no hay órdenes. Crea una desde el panel derecho.</td></tr>';
+                return;
+            }
+            body.innerHTML = state.orders.slice(0, 15).map((o) => {
+                const status = STATUS[o.status] || { label: o.status, kind: 'idle' };
+                return '<tr data-id="' + esc(o.id) + '" aria-selected="' + (o.id === state.selectedId) + '">' +
+                    '<td class="mono">' + esc(shortId(o.id)) + '</td>' +
+                    '<td>' + esc(o.quantity) + ' × ' + esc(o.productId) + '</td>' +
+                    '<td>' + esc(o.totalAmount) + '</td>' +
+                    '<td><span class="badge" data-kind="' + status.kind + '">' + esc(status.label) + '</span></td>' +
+                    '<td class="reason" title="' + esc(o.failureReason || '') + '">' + esc(o.failureReason || '') + '</td>' +
+                    '</tr>';
+            }).join('');
+        }
+
+        function render() {
+            renderConn();
+            renderOrders();
+            renderFlow();
+            renderTimeline();
+            renderGates();
+            renderBreakers();
+            renderFaults();
+            renderStock();
+        }
+
+
+        async function refreshEvents() {
+            const id = state.selectedId;
+            if (!id) return;
+            try {
+                const events = await api('/demo/events?orderId=' + encodeURIComponent(id));
+                if (id === state.selectedId) state.events = events;
+            } catch (_) { /* se reintenta en el siguiente ciclo */ }
+            renderFlow();
+            renderTimeline();
+        }
+
+        function selectOrder(id) {
+            state.selectedId = id;
+            state.events = [];
+            renderOrders();
+            renderFlow();
+            renderTimeline();
+            refreshEvents();
+        }
+
+        const busy = { fast: false, slow: false };
+
+        async function fastTick() {
+            if (busy.fast) return;
+            busy.fast = true;
+            try {
+                const [orders, breakers] = await Promise.all([api('/orders'), api('/admin/circuit-breakers')]);
+                state.orders = orders.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+                state.breakers = breakers;
+                state.online = true;
+                if (!state.selectedId && state.orders.length) state.selectedId = state.orders[0].id;
+                await refreshEvents();
+            } catch (_) {
+                state.online = false;
+            } finally {
+                busy.fast = false;
+                render();
+            }
+        }
+
+        async function slowTick() {
+            if (busy.slow) return;
+            busy.slow = true;
+            try {
+                const [failModes, stock] = await Promise.all([api('/demo/fail-mode'), api('/demo/stock')]);
+                state.failModes = failModes;
+                state.stock = stock;
+            } catch (_) { /* el estado en línea lo informa fastTick */ }
+            finally {
+                busy.slow = false;
+                renderFaults();
+                renderStock();
+            }
+        }
+
+
+        async function createOrder(payload, { quiet = false } = {}) {
+            const order = await postJson('/orders', payload);
+            state.orders = [order, ...state.orders.filter((o) => o.id !== order.id)];
+            selectOrder(order.id);
+            if (!quiet) {
+                const status = STATUS[order.status] || { label: order.status };
+                toast('Orden ' + shortId(order.id) + ': ' + status.label.toLowerCase() +
+                    (order.failureReason ? '. ' + order.failureReason : ''), order.status === 'CANCELLED' ? 'fail' : 'info');
+            }
+            fastTick();
+            slowTick();
+            return order;
+        }
+
+        async function runBurst() {
+            const button = $('[data-preset="burst"]');
+            const title = $('#burstTitle');
+            button.disabled = true;
+            try {
+                for (let i = 1; i <= BURST_SIZE; i++) {
+                    title.textContent = 'Enviando orden ' + i + ' de ' + BURST_SIZE;
+                    try {
+                        await createOrder(PRESETS.success, { quiet: true });
+                    } catch (error) {
+                        toast(error.message, 'fail');
+                        return;
+                    }
+                }
+                toast('Ráfaga terminada: ' + BURST_SIZE + ' órdenes enviadas');
+            } finally {
+                title.textContent = BURST_TITLE;
+                button.disabled = false;
+            }
+        }
+
+        async function setFailMode(service, mode) {
+            try {
+                await postJson('/demo/fail-mode/' + service, mode === 'SLOW' ? { mode, delayMs: 3000 } : { mode });
+            } catch (error) {
+                toast(error.message, 'fail');
+            }
+            slowTick();
+        }
+
+        async function resetFaults() {
+            const button = $('#resetFaults');
+            button.disabled = true;
+            try {
+                await Promise.all(SERVICES.map((s) => postJson('/demo/fail-mode/' + s.key, { mode: 'NORMAL' })));
+                toast('Los tres servicios responden con normalidad');
+            } catch (error) {
+                toast(error.message, 'fail');
+            } finally {
+                button.disabled = false;
+                slowTick();
+            }
+        }
+
+        /* ───────────── Construcción inicial ───────────── */
+        function buildStatic() {
+            $$('.gate').forEach((gate) => {
+                gate.innerHTML =
+                    '<svg viewBox="0 -12 64 24" width="64" height="24" aria-hidden="true">' +
+                    '<circle class="term" cx="8" cy="0" r="4"></circle>' +
+                    '<circle class="term" cx="56" cy="0" r="4"></circle>' +
+                    '<line class="lever" x1="8" y1="0" x2="52" y2="0"></line></svg>' +
+                    '<div class="gate-label">' + esc(gate.dataset.title) + ' <b class="gate-state">Sin datos</b></div>';
+            });
+
+            $('#faults').innerHTML = SERVICES.map(({ key, title }) =>
+                '<div class="fault" data-service="' + key + '">' +
+                '<div><strong>' + title + '</strong><small class="fault-text">Sin datos</small></div>' +
+                '<div class="seg" role="group" aria-label="Modo de ' + title + '">' +
+                '<button type="button" data-mode="NORMAL" aria-pressed="false">Normal</button>' +
+                '<button type="button" data-mode="ERROR" aria-pressed="false">Error</button>' +
+                '<button type="button" data-mode="SLOW" aria-pressed="false">Lento</button>' +
+                '</div>' +
+                '</div>'
+            ).join('');
+
+            $('#breakers').innerHTML = BREAKERS.map(({ key, title }) =>
+                '<div class="breaker" data-cb="' + key + '">' +
+                '<div class="breaker-head"><strong>' + title + '</strong><span class="badge" data-kind="idle">Sin datos</span></div>' +
+                '<div class="window" role="img" aria-label="Últimas 10 llamadas">' + '<span class="slot"></span>'.repeat(10) + '</div>' +
+                '<p class="breaker-meta"></p>' +
+                '<p class="breaker-note"></p>' +
+                '</div>'
+            ).join('');
+        }
+
+        function bindEvents() {
+            $('#orderForm').addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const form = new FormData(event.target);
+                const button = $('#submitOrder');
+                button.disabled = true;
+                try {
+                    await createOrder({
+                        customerId: form.get('customerId'),
+                        productId: form.get('productId'),
+                        quantity: parseInt(form.get('quantity'), 10),
+                        unitPrice: parseFloat(form.get('unitPrice'))
+                    });
+                } catch (error) {
+                    toast(error.message, 'fail');
+                } finally {
+                    button.disabled = false;
+                }
+            });
+
+            $$('.presets button').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const preset = button.dataset.preset;
+                    if (preset === 'burst') { runBurst(); return; }
+                    button.disabled = true;
+                    try {
+                        await createOrder(PRESETS[preset]);
+                    } catch (error) {
+                        toast(error.message, 'fail');
+                    } finally {
+                        button.disabled = false;
+                    }
+                });
+            });
+
+            $('#faults').addEventListener('click', (event) => {
+                const button = event.target.closest('button[data-mode]');
+                if (!button) return;
+                setFailMode(button.closest('.fault').dataset.service, button.dataset.mode);
+            });
+
+            $('#resetFaults').addEventListener('click', resetFaults);
+
+            $('#ordersBody').addEventListener('click', (event) => {
+                const row = event.target.closest('tr[data-id]');
+                if (row) selectOrder(row.dataset.id);
+            });
+        }
+
+        buildStatic();
+        bindEvents();
+        render();
+        fastTick();
+        slowTick();
+        setInterval(fastTick, 1000);
+        setInterval(slowTick, 2000);
+    })();
+</script>
+</body>
+</html>
